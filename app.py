@@ -8,7 +8,7 @@ st.set_page_config(page_title="서울 기온 예측 및 모델 평가", layout="
 
 st.title("🌡️ 서울 연평균 기온 선형회귀 모델 평가")
 
-# 1. 데이터 로드 및 전처리
+# 데이터 로드 및 전처리
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
 
 @st.cache_data
@@ -22,7 +22,6 @@ def load_data():
         연평균기온=("평균기온", "mean")
     ).reset_index()
     
-    # 2025년 이하 & 관측일 300일 이상 조건
     filtered_df = yearly_summary[
         (yearly_summary["연도"] <= 2025) & (yearly_summary["관측일수"] >= 300)
     ].copy()
@@ -32,9 +31,54 @@ def load_data():
 
 df_total = load_data()
 
-# ---------------------------------------------------------
+# 데이터 분할
+df_test = df_total[(df_total["연도"] >= 2006) & (df_total["연도"] <= 2025)].copy()
+df_train_50 = df_total[(df_total["연도"] >= 1956) & (df_total["연도"] <= 2005)].copy()
+df_train_100 = df_total[(df_total["연도"] >= 1906) & (df_total["연도"] <= 2005)].copy()
+
+
+# =========================================================
+# ① 훈련 데이터와 테스트 데이터
+# =========================================================
+st.subheader("① 훈련 데이터와 테스트 데이터")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        label="테스트 데이터",
+        value=f"{len(df_test)}개년",
+        delta="2006~2025년",
+        delta_color="off"
+    )
+
+with col2:
+    st.metric(
+        label="50년 학습 데이터",
+        value=f"{len(df_train_50)}개년",
+        delta="1956~2005년 중 조건을 만족한 자료",
+        delta_color="off"
+    )
+
+with col3:
+    st.metric(
+        label="100년 학습 데이터",
+        value=f"{len(df_train_100)}개년",
+        delta="1906~2005년 중 조건을 만족한 자료",
+        delta_color="off"
+    )
+
+st.info(
+    "두 모델 모두 같은 최근 20년(2006~2025년)을 테스트 데이터로 사용합니다. "
+    "따라서 50년을 학습한 모델과 100년을 학습한 모델의 예측 성능을 공정하게 비교할 수 있습니다."
+)
+
+st.markdown("---")
+
+
+# =========================================================
 # ② 전체 데이터로 만든 회귀모델
-# ---------------------------------------------------------
+# =========================================================
 st.subheader("② 전체 데이터로 만든 회귀모델")
 
 X_all = df_total["지난연수"].values
@@ -43,14 +87,12 @@ y_all = df_total["연평균기온"].values
 slope_all, intercept_all = np.polyfit(X_all, y_all, 1)
 y_pred_all = slope_all * X_all + intercept_all
 
-# 전체 데이터 지표 계산
 slope_100y_all = slope_all * 100
 corr_all = np.corrcoef(df_total["연도"], y_all)[0, 1]
 mae_all = mean_absolute_error(y_all, y_pred_all)
 mse_all = mean_squared_error(y_all, y_pred_all)
 r2_all = r2_score(y_all, y_pred_all)
 
-# 상단 메트릭 배치
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("100년당 기온 변화", f"{slope_100y_all:.2f} °C")
 m2.metric("상관계수 r", f"{corr_all:.3f}")
@@ -59,13 +101,11 @@ m4.metric("R²", f"{r2_all:.3f}")
 
 st.caption(f"MSE = {mse_all:.3f}")
 
-# 노란색 안내 상자
 st.warning(
     "이 평가는 전체 데이터를 이용해 회귀선을 만든 뒤 같은 데이터를 다시 평가한 결과입니다. "
     "따라서 새로운 데이터에 대한 실제 예측 성능을 평가한 것은 아닙니다."
 )
 
-# 전체 데이터 회귀 그래프
 x_range_all = np.linspace(df_total["연도"].min(), df_total["연도"].max(), 100)
 y_range_all = slope_all * (x_range_all - 1908) + intercept_all
 
@@ -107,22 +147,12 @@ st.plotly_chart(fig_all, use_container_width=True)
 
 st.markdown("---")
 
-# ---------------------------------------------------------
+
+# =========================================================
 # ③ 50년 학습과 100년 학습 비교
-# ---------------------------------------------------------
+# =========================================================
 st.subheader("③ 50년 학습과 100년 학습 비교")
 
-# 데이터 분할
-# 공통 테스트 데이터: 최근 20년 (2006~2025)
-df_test = df_total[(df_total["연도"] >= 2006) & (df_total["연도"] <= 2025)].copy()
-
-# 훈련 데이터 A: 최근 50년 (1956~2005)
-df_train_50 = df_total[(df_total["연도"] >= 1956) & (df_total["연도"] <= 2005)].copy()
-
-# 훈련 데이터 B: 최근 100년 (1906~2005)
-df_train_100 = df_total[(df_total["연도"] >= 1906) & (df_total["연도"] <= 2005)].copy()
-
-# 학습 및 테스트 평가 함수
 def eval_model(df_train, df_test):
     X_tr = df_train["지난연수"].values
     y_tr = df_train["연평균기온"].values
@@ -167,7 +197,6 @@ with comp_col2:
     m3.metric("MSE", f"{mse_100:.3f}")
     m4.metric("R²", f"{r2_100:.3f}")
 
-# 회귀선 예측 시각화 비교
 x_range_comp = np.linspace(1900, 2025, 125)
 y_line_50 = slope_50 * (x_range_comp - 1908) + intercept_50
 y_line_100 = slope_100 * (x_range_comp - 1908) + intercept_100
