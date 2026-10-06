@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-st.set_page_config(page_title="서울 기온 예측기", layout="wide")
+st.set_page_config(page_title="서울 기온 예측 및 모델 평가", layout="wide")
 
-st.title("📊 기온 예측기")
+st.title("🌡️ 서울 연평균 기온 선형회귀 모델 평가")
 
 # 1. 데이터 로드 및 전처리
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
@@ -13,76 +14,64 @@ DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270a
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_URL, encoding="utf-8")
-    
     df["날짜"] = pd.to_datetime(df["날짜"])
     df["연도"] = df["날짜"].dt.year
     
-    # 관측일수 및 연평균기온 계산
     yearly_summary = df.groupby("연도").agg(
         관측일수=("평균기온", "count"),
         연평균기온=("평균기온", "mean")
     ).reset_index()
     
-    # 조건 적용 (2025년 이하 & 관측일 300일 이상)
+    # 2025년 이하 & 관측일 300일 이상 조건
     filtered_df = yearly_summary[
         (yearly_summary["연도"] <= 2025) & (yearly_summary["관측일수"] >= 300)
     ].copy()
     
-    # 1908년부터 지난 연수 계산
     filtered_df["지난연수"] = filtered_df["연도"] - 1908
-    
     return filtered_df
 
 df_total = load_data()
 
-# 분석 기준 정보 계산
-total_count = len(df_total)
-start_year = int(df_total["연도"].min())
-end_year = int(df_total["연도"].max())
+# ---------------------------------------------------------
+# ② 전체 데이터로 만든 회귀모델
+# ---------------------------------------------------------
+st.subheader("② 전체 데이터로 만든 회귀모델")
 
-# 전체 기간 회귀 모델 (1908년 기준)
-X_tot = df_total["지난연수"].values
-y_tot = df_total["연평균기온"].values
-slope_tot, intercept_tot = np.polyfit(X_tot, y_tot, 1)
+X_all = df_total["지난연수"].values
+y_all = df_total["연평균기온"].values
 
-# 상관계수 계산
-corr_matrix = np.corrcoef(df_total["연도"], y_tot)
-correlation = corr_matrix[0, 1]
+slope_all, intercept_all = np.polyfit(X_all, y_all, 1)
+y_pred_all = slope_all * X_all + intercept_all
 
-# 최근 20년 회귀 모델
-df_recent20 = df_total[df_total["연도"] >= (end_year - 19)].copy()
-X_rec = df_recent20["지난연수"].values
-y_rec = df_recent20["연평균기온"].values
-slope_rec, intercept_rec = np.polyfit(X_rec, y_rec, 1)
+# 전체 데이터 지표 계산
+slope_100y_all = slope_all * 100
+corr_all = np.corrcoef(df_total["연도"], y_all)[0, 1]
+mae_all = mean_absolute_error(y_all, y_pred_all)
+mse_all = mean_squared_error(y_all, y_pred_all)
+r2_all = r2_score(y_all, y_pred_all)
 
-# 100년당 기온 상승량 계산
-slope_tot_100y = slope_tot * 100
-slope_rec_100y = slope_rec * 100
+# 상단 메트릭 배치
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("100년당 기온 변화", f"{slope_100y_all:.2f} °C")
+m2.metric("상관계수 r", f"{corr_all:.3f}")
+m3.metric("MAE", f"{mae_all:.3f} °C")
+m4.metric("R²", f"{r2_all:.3f}")
 
-# 2. 메트릭 요약 정보 표시
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("분석 대상 해의 개수", f"{total_count}개")
-col2.metric("시작 연도", f"{start_year}년")
-col3.metric("끝 연도", f"{end_year}년")
-col4.metric("상관계수", f"{correlation:.4f}")
-col5.metric("100년당 상승량 (전체)", f"{slope_tot_100y:+.2f} °C")
+st.caption(f"MSE = {mse_all:.3f}")
 
-st.markdown("---")
+# 노란색 안내 상자
+st.warning(
+    "이 평가는 전체 데이터를 이용해 회귀선을 만든 뒤 같은 데이터를 다시 평가한 결과입니다. "
+    "따라서 새로운 데이터에 대한 실제 예측 성능을 평가한 것은 아닙니다."
+)
 
-# 3. 그래프 영역: 전체 기간과 최근 20년 회귀선 비교
-st.subheader("📊 전체 기간과 최근 20년 회귀선 비교")
+# 전체 데이터 회귀 그래프
+x_range_all = np.linspace(df_total["연도"].min(), df_total["연도"].max(), 100)
+y_range_all = slope_all * (x_range_all - 1908) + intercept_all
 
-# X축 데이터 정의
-x_tot_range = np.linspace(df_total["연도"].min(), df_total["연도"].max(), 100)
-y_tot_line = slope_tot * (x_tot_range - 1908) + intercept_tot
+fig_all = go.Figure()
 
-x_rec_range = np.linspace(df_recent20["연도"].min(), df_recent20["연도"].max(), 50)
-y_rec_line = slope_rec * (x_rec_range - 1908) + intercept_rec
-
-fig = go.Figure()
-
-# 실제 연평균기온 (파란 점)
-fig.add_trace(
+fig_all.add_trace(
     go.Scatter(
         x=df_total["연도"],
         y=df_total["연평균기온"],
@@ -93,65 +82,150 @@ fig.add_trace(
     )
 )
 
-# 전체 기간 회귀선 (연한 파란선)
-fig.add_trace(
+fig_all.add_trace(
     go.Scatter(
-        x=x_tot_range,
-        y=y_tot_line,
+        x=x_range_all,
+        y=y_range_all,
         mode="lines",
-        name="전체 기간 회귀선",
+        name="전체 데이터 회귀선",
         line=dict(color="#6baed6", width=2),
-        hovertemplate="%{x:.0f}년 예측: %{y:.2f}°C<extra></extra>"
+        hovertemplate="%{x:.0f}년: %{y:.2f}°C<extra></extra>"
     )
 )
 
-# 최근 20년 회귀선 (빨간선)
-fig.add_trace(
-    go.Scatter(
-        x=x_rec_range,
-        y=y_rec_line,
-        mode="lines",
-        name="최근 20년 회귀선",
-        line=dict(color="#d62728", width=2.5),
-        hovertemplate="%{x:.0f}년 예측: %{y:.2f}°C<extra></extra>"
-    )
-)
-
-fig.update_layout(
+fig_all.update_layout(
     xaxis_title="연도",
     yaxis_title="연평균기온 (°C)",
     hovermode="closest",
     template="plotly_white",
-    height=500,
-    legend=dict(
-        x=0.98,
-        y=0.98,
-        xanchor="right",
-        yanchor="top",
-        bgcolor="rgba(255, 255, 255, 0.8)"
-    ),
+    height=450,
+    legend=dict(x=0.98, y=0.98, xanchor="right", yanchor="top", bgcolor="rgba(255, 255, 255, 0.8)"),
     margin=dict(l=40, r=40, t=20, b=40)
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig_all, use_container_width=True)
 
 st.markdown("---")
 
-# 4. 연도별 기온 예측 슬라이더 및 수치 표시 영역
-st.subheader("🔮 연도별 기온 예측")
-st.caption("예측할 연도를 선택하세요.")
+# ---------------------------------------------------------
+# ③ 50년 학습과 100년 학습 비교
+# ---------------------------------------------------------
+st.subheader("③ 50년 학습과 100년 학습 비교")
 
-target_year = st.slider(
-    "예측할 연도 선택",
-    min_value=1900,
-    max_value=2100,
-    value=2055,
-    step=1,
-    label_visibility="collapsed"
+# 데이터 분할
+# 공통 테스트 데이터: 최근 20년 (2006~2025)
+df_test = df_total[(df_total["연도"] >= 2006) & (df_total["연도"] <= 2025)].copy()
+
+# 훈련 데이터 A: 최근 50년 (1956~2005)
+df_train_50 = df_total[(df_total["연도"] >= 1956) & (df_total["연도"] <= 2005)].copy()
+
+# 훈련 데이터 B: 최근 100년 (1906~2005)
+df_train_100 = df_total[(df_total["연도"] >= 1906) & (df_total["연도"] <= 2005)].copy()
+
+# 학습 및 테스트 평가 함수
+def eval_model(df_train, df_test):
+    X_tr = df_train["지난연수"].values
+    y_tr = df_train["연평균기온"].values
+    slope, intercept = np.polyfit(X_tr, y_tr, 1)
+    
+    X_te = df_test["지난연수"].values
+    y_te = df_test["연평균기온"].values
+    y_pred = slope * X_te + intercept
+    
+    mae = mean_absolute_error(y_te, y_pred)
+    mse = mean_squared_error(y_te, y_pred)
+    r2 = r2_score(y_te, y_pred)
+    
+    return slope, intercept, slope * 100, mae, mse, r2
+
+slope_50, intercept_50, slope100_50, mae_50, mse_50, r2_50 = eval_model(df_train_50, df_test)
+slope_100, intercept_100, slope100_100, mae_100, mse_100, r2_100 = eval_model(df_train_100, df_test)
+
+comp_col1, comp_col2 = st.columns(2)
+
+with comp_col1:
+    st.markdown("### 최근 50년 학습")
+    st.caption("학습 기간: 1956년 ~ 2005년 | 테스트: 2006년 ~ 2025년")
+    
+    m1, m2 = st.columns(2)
+    m1.metric("100년당 기온 변화", f"{slope100_50:.2f} °C")
+    m2.metric("MAE", f"{mae_50:.3f} °C")
+    
+    m3, m4 = st.columns(2)
+    m3.metric("MSE", f"{mse_50:.3f}")
+    m4.metric("R²", f"{r2_50:.3f}")
+
+with comp_col2:
+    st.markdown("### 최근 100년 학습")
+    st.caption("학습 기간: 1906년 ~ 2005년 | 테스트: 2006년 ~ 2025년")
+    
+    m1, m2 = st.columns(2)
+    m1.metric("100년당 기온 변화", f"{slope100_100:.2f} °C")
+    m2.metric("MAE", f"{mae_100:.3f} °C")
+    
+    m3, m4 = st.columns(2)
+    m3.metric("MSE", f"{mse_100:.3f}")
+    m4.metric("R²", f"{r2_100:.3f}")
+
+# 회귀선 예측 시각화 비교
+x_range_comp = np.linspace(1900, 2025, 125)
+y_line_50 = slope_50 * (x_range_comp - 1908) + intercept_50
+y_line_100 = slope_100 * (x_range_comp - 1908) + intercept_100
+
+fig_comp = go.Figure()
+
+fig_comp.add_trace(
+    go.Scatter(
+        x=df_total["연도"],
+        y=df_total["연평균기온"],
+        mode="markers",
+        name="전체 관측 데이터",
+        marker=dict(color="#cbd5e1", size=5),
+        hovertemplate="%{x}년: %{y:.2f}°C<extra></extra>"
+    )
 )
 
-# 전체 기간 회귀 모델 기준 예측값 계산
-predicted_temp = slope_tot * (target_year - 1908) + intercept_tot
+fig_comp.add_trace(
+    go.Scatter(
+        x=df_test["연도"],
+        y=df_test["연평균기온"],
+        mode="markers",
+        name="테스트 데이터 (2006~2025)",
+        marker=dict(color="#0f172a", size=7),
+        hovertemplate="%{x}년(테스트): %{y:.2f}°C<extra></extra>"
+    )
+)
 
-st.write(f"{target_year}년 예상 연평균기온")
-st.markdown(f"<h1 style='color: #2c3e50; font-size: 2.5rem; margin-top: -10px;'>{predicted_temp:.2f} °C</h1>", unsafe_allow_html=True)
+fig_comp.add_trace(
+    go.Scatter(
+        x=x_range_comp,
+        y=y_line_50,
+        mode="lines",
+        name="50년 학습 회귀선",
+        line=dict(color="#f97316", width=2.5),
+        hovertemplate="%{x:.0f}년 예측(50년): %{y:.2f}°C<extra></extra>"
+    )
+)
+
+fig_comp.add_trace(
+    go.Scatter(
+        x=x_range_comp,
+        y=y_line_100,
+        mode="lines",
+        name="100년 학습 회귀선",
+        line=dict(color="#16a34a", width=2.5),
+        hovertemplate="%{x:.0f}년 예측(100년): %{y:.2f}°C<extra></extra>"
+    )
+)
+
+fig_comp.update_layout(
+    title="학습 기간별 회귀선의 최근 20년 테스트 데이터 예측 성능 비교",
+    xaxis_title="연도",
+    yaxis_title="연평균기온 (°C)",
+    hovermode="closest",
+    template="plotly_white",
+    height=480,
+    legend=dict(x=0.02, y=0.98, xanchor="left", yanchor="top", bgcolor="rgba(255, 255, 255, 0.8)")
+)
+
+st.plotly_chart(fig_comp, use_container_width=True)
