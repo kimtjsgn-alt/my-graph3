@@ -166,10 +166,14 @@ def eval_model(df_train, df_test):
     mse = mean_squared_error(y_te, y_pred)
     r2 = r2_score(y_te, y_pred)
     
-    return slope, intercept, slope * 100, mae, mse, r2
+    return slope, intercept, mae, mse, r2
 
-slope_50, intercept_50, slope100_50, mae_50, mse_50, r2_50 = eval_model(df_train_50, df_test)
-slope_100, intercept_100, slope100_100, mae_100, mse_100, r2_100 = eval_model(df_train_100, df_test)
+slope_50, intercept_50, mae_50, mse_50, r2_50 = eval_model(df_train_50, df_test)
+slope_100, intercept_100, mae_100, mse_100, r2_100 = eval_model(df_train_100, df_test)
+
+# 기간별 기울기 계산 (50년당 vs 100년당)
+slope50_50 = slope_50 * 50
+slope100_100 = slope_100 * 100
 
 comp_col1, comp_col2 = st.columns(2)
 
@@ -178,7 +182,7 @@ with comp_col1:
     st.caption("학습 기간: 1956년 ~ 2005년 | 테스트: 2006년 ~ 2025년")
     
     m1, m2 = st.columns(2)
-    m1.metric("100년당 기온 변화", f"{slope100_50:.2f} °C")
+    m1.metric("50년당 기온 변화", f"{slope50_50:.2f} °C")
     m2.metric("MAE", f"{mae_50:.3f} °C")
     
     m3, m4 = st.columns(2)
